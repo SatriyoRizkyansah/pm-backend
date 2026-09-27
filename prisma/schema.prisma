@@ -1,0 +1,277 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── ENUMS ─────────────────────────────────────────────────────────────────
+
+enum StatusUmum {
+  aktif
+  nonaktif
+}
+
+enum StatusDokumen {
+  lengkap
+  belum_lengkap
+  kedaluwarsa
+}
+
+enum StatusPengadaan {
+  draft
+  diajukan
+  dalam_review
+  disetujui
+  ditolak
+  revisi
+  sedang_proses
+  selesai
+  dibatalkan
+}
+
+enum MetodePengadaan {
+  tender
+  pengadaan_langsung
+  penunjukan_langsung
+  e_procurement
+}
+
+enum StatusApproval {
+  menunggu
+  disetujui
+  ditolak
+  revisi
+}
+
+enum TipePenyimpanan {
+  upload_lokal
+  link_eksternal
+}
+
+enum PrioritasPengadaan {
+  rendah
+  sedang
+  tinggi
+  darurat
+}
+
+enum StatusBarang {
+  dipesan
+  diterima
+  ditolak
+  dikembalikan
+}
+
+// ─── 1. MASTER DATA (referensi) ───────────────────────────────────────────
+
+model Role {
+  id        String  @id @default(uuid()) @db.Uuid
+  kode      String  @unique @db.VarChar(50)
+  nama      String  @db.VarChar(100)
+  deskripsi String? @db.Text
+
+  users     User[]
+  hakAkses  HakAkses[]
+}
+
+model HakAkses {
+  id           String  @id @default(uuid()) @db.Uuid
+  roleId       String  @db.Uuid
+  modul        String  @db.VarChar(50)
+  dapatBaca    Boolean @default(false)
+  dapatTulis   Boolean @default(false)
+  dapatApprove Boolean @default(false)
+  dapatHapus   Boolean @default(false)
+
+  role Role @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@unique([roleId, modul])
+}
+
+model User {
+  id           String     @id @default(uuid()) @db.Uuid
+  nama         String     @db.VarChar(150)
+  email        String     @unique @db.VarChar(150)
+  passwordHash String     @db.VarChar(255)
+  roleId       String     @db.Uuid
+  unitKerja    String?    @db.VarChar(150)
+  foto         String?    @db.VarChar(500)
+  status       StatusUmum @default(aktif)
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  role              Role               @relation(fields: [roleId], references: [id])
+  dokumenDiunggah   Dokumen[]
+  pengadaanDiajukan Pengadaan[]
+  approvalSteps     ApprovalWorkflow[]
+  notifikasi        Notifikasi[]
+  auditLog          AuditLog[]
+}
+
+// ─── 2. VENDOR / SUPPLIER ─────────────────────────────────────────────────
+
+model Vendor {
+  id           String     @id @default(uuid()) @db.Uuid
+  nama         String     @db.VarChar(200)
+  alamat       String?    @db.Text
+  telepon      String?    @db.VarChar(20)
+  email        String?    @db.VarChar(150)
+  npwp         String?    @db.VarChar(30)
+  contactPerson String?   @db.VarChar(150)
+  status       StatusUmum @default(aktif)
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  pengadaanItems PengadaanItem[]
+}
+
+// ─── 3. KATEGORI & BARANG ─────────────────────────────────────────────────
+
+model KategoriPengadaan {
+  id   String @id @default(uuid()) @db.Uuid
+  kode String @unique @db.VarChar(20)
+  nama String @db.VarChar(100)
+
+  barang Barang[]
+}
+
+model Barang {
+  id                String @id @default(uuid()) @db.Uuid
+  nama              String @db.VarChar(200)
+  spesifikasi       String? @db.Text
+  satuan            String @db.VarChar(50)
+  kategoriId        String @db.Uuid
+  hargaEstimasi     Decimal? @db.Decimal(20, 2)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  kategori KategoriPengadaan @relation(fields: [kategoriId], references: [id])
+  items    PengadaanItem[]
+}
+
+// ─── 4. PENGADAAN (INTI) ──────────────────────────────────────────────────
+
+model Pengadaan {
+  id                String            @id @default(uuid()) @db.Uuid
+  nomorSurat        String            @unique @db.VarChar(50)
+  judul             String            @db.VarChar(300)
+  deskripsi         String?           @db.Text
+  metode            MetodePengadaan
+  prioritas         PrioritasPengadaan @default(sedang)
+  status            StatusPengadaan   @default(draft)
+  tanggalPengajuan  DateTime?         @db.Date
+  tanggalDeadline   DateTime?         @db.Date
+  totalEstimasi     Decimal?          @db.Decimal(20, 2)
+  unitKerja         String?           @db.VarChar(150)
+  diajukanOleh      String?           @db.Uuid
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+
+  diajukanOlehUser User?              @relation(fields: [diajukanOleh], references: [id])
+  items            PengadaanItem[]
+  dokumen          Dokumen[]
+  approvalSteps    ApprovalWorkflow[]
+  notifikasi       Notifikasi[]
+
+  @@index([status])
+  @@index([tanggalPengajuan])
+  @@index([diajukanOleh])
+}
+
+model PengadaanItem {
+  id            String      @id @default(uuid()) @db.Uuid
+  pengadaanId   String      @db.Uuid
+  barangId      String      @db.Uuid
+  vendorId      String?     @db.Uuid
+  jumlah        Int
+  hargaSatuan   Decimal?    @db.Decimal(20, 2)
+  subtotal      Decimal?    @db.Decimal(20, 2)
+  status        StatusBarang @default(dipesan)
+  catatan       String?     @db.Text
+  createdAt     DateTime    @default(now())
+
+  pengadaan Pengadaan @relation(fields: [pengadaanId], references: [id], onDelete: Cascade)
+  barang    Barang    @relation(fields: [barangId], references: [id])
+  vendor    Vendor?   @relation(fields: [vendorId], references: [id])
+
+  @@index([pengadaanId])
+}
+
+// ─── 5. ALUR PERSETUJUAN ──────────────────────────────────────────────────
+
+model ApprovalWorkflow {
+  id                  String         @id @default(uuid()) @db.Uuid
+  pengadaanId         String         @db.Uuid
+  urutan              Int
+  namaLangkah         String         @db.VarChar(150)
+  penanggungJawab     String?        @db.Uuid
+  status              StatusApproval @default(menunggu)
+  tanggalKeputusan    DateTime?
+  catatan             String?        @db.Text
+  createdAt           DateTime       @default(now())
+
+  pengadaan          Pengadaan          @relation(fields: [pengadaanId], references: [id], onDelete: Cascade)
+  penanggungJawabUser User?             @relation(fields: [penanggungJawab], references: [id])
+
+  @@unique([pengadaanId, urutan])
+  @@index([pengadaanId])
+  @@index([status])
+}
+
+// ─── 6. DOKUMEN ───────────────────────────────────────────────────────────
+
+model Dokumen {
+  id               String          @id @default(uuid()) @db.Uuid
+  pengadaanId      String          @db.Uuid
+  nama             String          @db.VarChar(200)
+  tipePenyimpanan  TipePenyimpanan @default(upload_lokal)
+  filePath         String          @db.VarChar(500)
+  ukuran           Int?            // bytes
+  status           StatusDokumen   @default(belum_lengkap)
+  diunggahOleh     String?         @db.Uuid
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+
+  pengadaan        Pengadaan      @relation(fields: [pengadaanId], references: [id], onDelete: Cascade)
+  diunggahOlehUser User?          @relation(fields: [diunggahOleh], references: [id])
+
+  @@index([pengadaanId])
+}
+
+// ─── 7. NOTIFIKASI ────────────────────────────────────────────────────────
+
+model Notifikasi {
+  id             String    @id @default(uuid()) @db.Uuid
+  userId         String    @db.Uuid
+  pengadaanId    String?   @db.Uuid
+  referensiTabel String    @db.VarChar(50)
+  referensiId    String    @db.Uuid
+  pesan          String    @db.VarChar(255)
+  tanggalKirim   DateTime  @default(now())
+  sudahDibaca    Boolean   @default(false)
+
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  pengadaan Pengadaan? @relation(fields: [pengadaanId], references: [id], onDelete: SetNull)
+
+  @@index([userId, sudahDibaca])
+}
+
+// ─── 8. AUDIT TRAIL ───────────────────────────────────────────────────────
+
+model AuditLog {
+  id            String   @id @default(uuid()) @db.Uuid
+  tabel         String   @db.VarChar(50)
+  recordId      String   @db.Uuid
+  aksi          String   @db.VarChar(20)
+  dilakukanOleh String?  @db.Uuid
+  dataSebelum   Json?
+  dataSesudah   Json?
+  createdAt     DateTime @default(now())
+
+  dilakukanOlehUser User? @relation(fields: [dilakukanOleh], references: [id])
+
+  @@index([tabel, recordId])
+}
