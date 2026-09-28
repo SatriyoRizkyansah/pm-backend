@@ -13,6 +13,7 @@ import { ApiRoles } from '../../common/decorators/api-roles.decorator.js';
 import { Role } from '../../common/enums/role.enum.js';
 import { PrismaService } from '../../prisma.module.js';
 import { PaginateQuery } from '../../common/dto/paginate-query.dto.js';
+import { AuditLogQueryDto } from './auditlog.dto.js';
 
 @ApiTags('Audit Log')
 @ApiBearerAuth()
@@ -23,18 +24,24 @@ export class AuditLogGetController {
 
   @Get()
   @HttpCode(200)
-  @ApiRoles('Ambil daftar audit log', [Role.Admin])
-  @ApiQuery({ name: 'tabel', required: false })
-  @ApiQuery({ name: 'recordId', required: false })
-  async findAll(
-    @Query() q: PaginateQuery & { tabel?: string; recordId?: string },
-  ) {
-    const { limit, page, tabel, recordId } = q;
+  @ApiRoles('Ambil daftar audit log', [Role.Admin, Role.Pimpinan])
+  @ApiOperation({ summary: 'Ambil daftar audit log (paginasi)' })
+  async findAll(@Query() q: AuditLogQueryDto) {
+    const limit = Number(q?.limit) > 0 ? Number(q.limit) : 10;
+    const page = Number(q?.page) > 0 ? Number(q.page) : 1;
     const skip = (page - 1) * limit;
 
     const where: any = {};
-    if (tabel) where.tabel = tabel;
-    if (recordId) where.recordId = recordId;
+    if (q?.tabel) where.tabel = q.tabel;
+    if (q?.recordId) where.recordId = q.recordId;
+    if (q?.aksi) where.aksi = { equals: q.aksi, mode: 'insensitive' };
+    if (q?.query) {
+      where.OR = [
+        { tabel: { contains: q.query, mode: 'insensitive' } },
+        { aksi: { contains: q.query, mode: 'insensitive' } },
+        { recordId: { contains: q.query, mode: 'insensitive' } },
+      ];
+    }
 
     const [data, total] = await Promise.all([
       this.prisma.auditLog.findMany({
@@ -43,7 +50,7 @@ export class AuditLogGetController {
         take: limit,
         orderBy: { createdAt: 'desc' },
         include: {
-          dilakukanOlehUser: { select: { id: true, nama: true, email: true } },
+          dilakukanOlehUser: { select: { id: true, nama: true, email: true, unitKerja: true } },
         },
       }),
       this.prisma.auditLog.count({ where }),
